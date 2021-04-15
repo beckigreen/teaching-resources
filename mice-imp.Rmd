@@ -1,0 +1,160 @@
+---
+title: "```mice```: multivariate imputation by chained equations"
+author: "Becki Green"
+date: "13/04/2021"
+output: html_document
+---
+
+---
+
+### Background
+
+Multiple imputation refers to the method of replacing missing values multiple times, generating multiple datasets. Multivariate imputation by chained equations (mice) is a type of multiple imputation, which replaces these missing values using a chain of regression equations. Missing values are replaced one-by-one, using information from other variables, which are the predictors in these regression models. Residual error is added in order to add some variability to each of the imputations. 
+
+Analyses can then be performed on each of these imputed datasets and the coefficients and standard errors can be pooled into one set of results. Using multiple versions of this missing data can lead to less biased and thus more accurate analyses. 
+
+![](https://bookdown.org/mwheymans/bookmi/images/fig4.1.png)
+
+From: [Applied Missing Data Analysis with SPSS & RStudio, Heymans & Eekhourt, 2019](https://bookdown.org/mwheymans/bookmi/multiple-imputation.html#multiple-imputation-in-r)
+
+**MICE process:**
+
+1) All missing data are replaced with the mean, or some other prescriptive method
+2) One variable is set back to missing
+3) This variable is regressed on the other variables in the dataset
+4) Missing values are imputed using predictions from the regression model
+5) 1-4 are then repeated for other variables with missing data
+6) Once all missing data is imputed, 1-5 are then repeated again until convergence is met
+7) Then 1-6 are repeated for each new dataset!
+
+```{r, echo=F}
+knitr::opts_chunk$set(class.output = "bg-primary") #blue output boxes
+```
+
+---
+
+### 1) Loading packages
+```{r, message=FALSE, warning=FALSE}
+#install.packages("pacman")
+pacman::p_load(mice, Hmisc)
+```
+
+---
+
+### 2) Loading in and inspecting data
+
+```{r}
+df <- iris #load in data
+describe(df) #quick glance - looks sensible
+sapply(df, class) #checking classes - looks correct, no need to transform
+```
+
+<br>
+
+#### Introducing missing petal length and species data for our simulation:
+
+```{r}
+set.seed(500)
+df[sample(1:nrow(df), 7), "Petal.Length"] <- NA #introduce NAs
+df[sample(1:nrow(df), 7), "Species"] <- NA #introduce NAs
+
+df[,1:4] <- scale(df[,1:4]) #scale numeric variables
+summary(df) #check for NAs and scaling
+```
+
+<br>
+
+#### Exploring missing data patterns:
+
+```{r}
+md.pattern(df) #a matrix and heatmap of missing data - 138 ppts have a full dataset, 5 are missing sepal length or species, and 2 are missing both sepal length and species
+```
+
+---
+
+### 3) Initiate imputation
+We can initiate mice imputation to create a predictor matrix (which specifies the variables to be used in imputation) and list containing the methods of imputation (which is different for different modalities of data).
+
+```{r}
+init <- mice(df, maxit=0) 
+meth <- init$method
+head(meth) #looks correct
+```
+
+"pmm" stands for predictive mean matching, and is used to impute continuous variables; "polyreg" stands for polytomous regression, which is used for unordered categorical data with more than two levels; "logreg" is used for binary variables.
+
+```{r}
+pred <- init$predictorMatrix
+head(pred)
+```
+
+You can omit a variable from being used as a predictor in imputation by setting it to 0; this is commonly used to omit participant ID, or for variables that may bias the imputation or are not valuable predictors. Here, we have demonstrated this by setting sepal length to 0. If you are happy to use all variables to impute, you can skip this part.
+
+```{r}
+pred[,'Sepal.Length'] <- 0 #remove sepal length as a predictor
+head(pred)
+```
+
+---
+
+### 4) Imputation
+Now it's time to impute! Here, we have specified that we want ```m=20``` imputations (20 versions of the dataset) and ```maxit=20``` iterations (20 iterations for convergence). We have also manually specified the imputation method and predictor matrix, and have turned print off (otherwise it gets very busy, but this is entirely up to you). For the number of imputations, this is really a trade off between power (the more the better) and computational resource.
+
+```{r}
+imp <- mice(df,m=20,maxit=20,meth=meth,pred=pred,seed=500,print=FALSE) #impute
+summary(imp)
+```
+
+**NB These mids objects that are created during mice imputation can get very large!**
+```{r}
+object.size(df)
+object.size(imp)
+```
+
+<br>
+
+#### Checking imputation:
+We can also check whether the imputation has converged by calling ``plot`` on our imputation object; here, we want to see that the iterations intermingle and that there are no distinct patterns. Another useful check is ```stripplot``, where we can view the imputed values at each imputation; we can check here whether the imputed data are plausible.
+
+```{r}
+plot(imp)
+stripplot(imp, Petal.Length~.imp)
+```
+
+<br>
+
+#### And here you can see the summary for each of the imputations:
+
+```{r}
+dim(df)
+summary(complete(imp, 0)) #original data
+summary(complete(imp, 20)) #imputation number 20 - selected this at random for demonstration
+summary(complete(imp)) #all imputed datasets
+```
+
+---
+
+### 5) Analysis
+Finally, you can perform some analyses and pool the results! ```with``` is from the ```mice``` package and can be used for a range of statistical analyses - what it is essentially doing here is applying the analysis to each individual dataset. You can see each individual set of results by calling ```model$analyses```. Then, you can pool the results, which then appear as they would with a non-imputed dataset.
+
+```{r}
+model <- with(imp, lm(Sepal.Length ~ Petal.Width + Sepal.Width + Species + Petal.Length)) #analysis
+res <- summary(pool(model), conf.int = TRUE) #pool results
+res
+```
+
+---
+
+### Potential issues
+- Large amounts of missing data
+- Highly correlated predictors
+
+---
+
+### Resources
+- [Flexible Imputation of Missing Data - Stef van Buuren](https://stefvanbuuren.name/fimd/)
+- [MICE is Nice, but why should you care? - Medium](https://medium.com/@ofirdi/mice-is-nice-but-why-should-you-care-e66698f245a3)
+- [Multiple imputation by chained equations: what is it and how does it work? - Azur et al., 2011](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3074241/)
+- [Imputing Missing Data with R; MICE package - Datascienceplus](https://datascienceplus.com/imputing-missing-data-with-r-mice-package/)
+- [mice: Algorithmic convergence and inference pooling - Gerko Vink & Stef van Buuren](https://www.gerkovink.com/miceVignettes/Convergence_pooling/Convergence_and_pooling.html)
+- [Applied Missing Data Analysis with SPSS & RStudio, Heymans & Eekhourt, 2019](https://bookdown.org/mwheymans/bookmi/multiple-imputation.html#multiple-imputation-in-r)
